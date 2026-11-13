@@ -1,0 +1,11 @@
+{
+  "name": "gelato-connect-skills",
+  "owner": { "name": "Gelato" },
+  "plugins": [
+    {
+      "name": "gelato-connect-setup",
+      "source": "./plugins/gelato-connect-setup",
+      "description": "Signs you in to Gelato Connect and installs or updates the Gelato Connect skills."
+    }
+  ]
+}
