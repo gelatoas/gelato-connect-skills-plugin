@@ -1,0 +1,13 @@
+{
+  "name": "gelato-connect-setup",
+  "version": "0.1.0",
+  "description": "Signs you in to Gelato Connect and installs or updates the Gelato Connect skills.",
+  "author": { "name": "Gelato" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Gelato Connect setup",
+    "shortDescription": "Install or update the Gelato Connect skills",
+    "developerName": "Gelato",
+    "category": "Developer Tools"
+  }
+}
