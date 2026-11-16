@@ -42,7 +42,7 @@ the same server, so it catches corruption, not a compromised server.
 
 ## Update check
 
-Once a day, in the background, the plugin asks the Gelato platform which skills
+Once a day, in the background, the plugin asks the Gelato Connect API which skills
 versions are published (versions only, no sign-in, no personal data) so it can
 tell you when an update is available. Set `GELATO_CONNECT_NO_UPDATE_CHECK=1` to
 turn this off.
