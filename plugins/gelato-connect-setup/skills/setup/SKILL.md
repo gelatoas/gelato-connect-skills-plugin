@@ -31,7 +31,7 @@ Expect a permission prompt. In Codex it needs approval because it opens a browse
 ## What it does
 
 - Opens the browser so the user signs in with their Gelato account. Never ask for or handle the password. If the browser does not open, the script prints a sign-in link: give it to the user.
-- Downloads the account's skills bundle from the Gelato platform and checks it holds exactly the two packages.
+- Downloads the account's skills bundle from the Gelato Connect API and checks it holds exactly the two packages.
 - Installs them under `~/.gelato-connect-skills`.
 - Registers them with Claude Code (local marketplace `gelato-connect`) and/or Codex (links in `~/.codex/skills`).
 - Stores only a renewable sign-in (`session.json`, owner-only) for the background updater, never the access token; see above for how to opt out.
