@@ -22,6 +22,15 @@ codex plugin add gelato-connect-setup@gelato-connect-skills
 
 In Codex, trust the session-start hook once via `/hooks`.
 
+On native Windows (PowerShell, no WSL) the same commands work. Python 3.9 or
+newer (`py -3`) is needed; setup uses `install_win.py`, a Python installer, instead
+of bash. The session-start update check needs Git Bash for Claude Code (its
+default shell on Windows) and runs through `py -3`.
+
+The setup runs in Claude Code (the terminal app, or the Code tab of the Claude
+desktop app) and in Codex. Claude desktop's Chat and Cowork modes do not load
+plugins installed with the `claude` command.
+
 Then ask your assistant: "Set up the Gelato Connect skills."
 
 ## What is public here
@@ -66,6 +75,8 @@ At the next session start the assistant tells you what was updated.
 `plugins/gelato-connect-setup/skills/setup/scripts/install.sh` is a
 byte-identical copy of the installer in the Gelato Connect skills ZIP download
 and must only change together with it.
+`install_win.py` next to it is the same installer for Windows, written in Python;
+it takes the same arguments and has to change together with `install.sh`.
 
 ## Tests
 
