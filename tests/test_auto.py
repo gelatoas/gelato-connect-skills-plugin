@@ -172,6 +172,14 @@ class AutoTests(EnvCase):
         self.assertEqual(self.read('session.json'), {'refresh_token': ROTATED})
         self.assertEqual(self.api.requests[0]['headers']['Authorization'], 'Bearer ' + FRESH)
 
+    def test_should_not_register_an_assistant_that_is_not_in_the_targets_file(self):
+        self.put('targets', {'targets': 'codex'})
+        del os.environ['GELATO_CONNECT_TARGETS']
+        self.auto(self.good())
+        self.assertEqual(self.read('installed.json'), {APIS: '1.2.0', KNOW: '3.4.5'})
+        self.assertTrue(os.path.islink(os.path.join(self.home, '.codex', 'skills', APIS + '-skill')))
+        self.assertFalse(os.path.exists(os.path.join(self.root, 'marketplace', '.claude-plugin', 'marketplace.json')))
+
     def test_should_record_nothing_when_the_install_fails(self):
         self.api.close()
         self.api = fake_api(bundle=b'not a zip')
