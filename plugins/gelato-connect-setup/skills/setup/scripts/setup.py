@@ -530,6 +530,69 @@ def _folders(home):
     return root
 
 
+# --- Grok Build: links in ~/.grok/skills, outside the installer (which knows only Claude and Codex) ---
+def _grok_dirs(home):
+    return (os.path.join(home, '.grok'), os.path.join(home, '.grok', 'skills'))
+
+
+def link_grok(root, home):
+    """Reconcile one symlink per installed skill folder in ~/.grok/skills. Only links we made are replaced or removed."""
+    grok, skills = _grok_dirs(home)
+    root = os.path.abspath(root)  # a relative root must not make a link that resolves elsewhere
+    base = os.path.join(root, 'marketplace')
+    want = {}
+    for p in (grok, skills):  # before the first filesystem write
+        refuse_forbidden(p, home)
+    for n in NAMES:
+        folder = os.path.join(base, n, 'skills')
+        refuse_forbidden(folder, home)  # every path is checked before it is listed or read
+        if os.path.isdir(folder):
+            for s in sorted(os.listdir(folder)):
+                skill = os.path.join(folder, s)
+                refuse_forbidden(skill, home)
+                refuse_forbidden(os.path.join(skill, 'SKILL.md'), home)
+                md = os.path.join(skill, 'SKILL.md')
+                if not (os.path.islink(skill) or os.path.islink(md)) and os.path.isfile(md):
+                    want[s] = skill
+    os.makedirs(skills, exist_ok=True)
+    ours = lambda link: os.path.islink(link) and os.readlink(link).startswith(base + os.sep)
+    for name in os.listdir(skills):
+        link = os.path.join(skills, name)
+        if ours(link) and want.get(name) != os.readlink(link):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(link)  # stale: renamed or removed skill
+    for name, src in want.items():
+        link = os.path.join(skills, name)
+        if os.path.lexists(link):
+            if not ours(link):
+                print('grok: skipped %s: existing entry is not ours' % name)
+            continue
+        with contextlib.suppress(FileExistsError, FileNotFoundError):
+            os.symlink(src, link)
+    print('grok: skills linked in %s' % skills)
+
+
+def sync_grok(root, home):
+    """After a good install: reconcile the Grok links if the user opted in (its own file, never `targets`)."""
+    if WINDOWS:
+        return
+    try:
+        path = os.path.join(root, 'grok.json')
+        refuse_forbidden(path, home)
+        opted = (_read_json(path, private=True) or {}).get('grok') is True
+    except (OSError, ValueError, SetupError):
+        opted = False  # Grok state can never block a setup or an update that is not Grok's
+    if opted:
+        link_grok(root, home)
+
+
+def keep_grok(root):
+    try:
+        _write_private(root, 'grok.json', {'grok': True})
+    except OSError:
+        raise SetupError('error: could not store the Grok opt-in; the skills are installed, run setup with --grok again') from None
+
+
 def _versions(data):
     """{name: (x, y, z)} for the known names that hold a strict x.y.z string."""
     data = data if isinstance(data, dict) else {}
@@ -603,6 +666,11 @@ def auto(run=subprocess.run, fetcher=fetch_bundle):
         changed = {n: '.'.join(map(str, v)) for n, v in now.items() if v != old.get(n)}
         if changed:
             _write_private(root, 'updated.json', {'versions': changed})
+        try:  # last, and apart: Grok links never change what the update reports
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                sync_grok(root, home)
+        except Exception:
+            pass
     except BaseException:
         pass
     return 0
@@ -612,13 +680,21 @@ def main(argv=None, signin=sign_in, fetcher=fetch_bundle, run=subprocess.run):
     if argv == ['--auto']:
         return auto(run, fetcher)
     try:
+        grok = bool(argv) and '--grok' in argv
+        if grok:
+            argv = [a for a in argv if a != '--grok']
+            if WINDOWS:
+                raise SetupError('error: --grok is not supported on Windows (Grok Build links need symlinks)')
         # --targets: same as GELATO_CONNECT_TARGETS, for shells where setting a variable is spelled differently (PowerShell, Git Bash)
         if argv and len(argv) == 2 and argv[0] == '--targets' and _words(argv[1]):
             os.environ['GELATO_CONNECT_TARGETS'] = argv[1]
         elif argv:
-            raise SetupError('usage: setup.py [--targets claude|codex]')
+            raise SetupError('usage: setup.py [--grok] [--targets claude|codex]')
         home = os.path.expanduser('~')
         root = _folders(home)
+        if grok:  # refuse a bad ~/.grok before sign-in
+            for d in _grok_dirs(home):
+                refuse_forbidden(d, home)
         origin = api_origin(os.environ.get('GELATO_CONNECT_SKILLS_HOST'))
         if os.environ.get('GELATO_CONNECT_NO_AUTO_UPDATE'):
             _remove(root, 'session.json')  # opted out: no stored sign-in, whatever happens next
@@ -628,6 +704,14 @@ def main(argv=None, signin=sign_in, fetcher=fetch_bundle, run=subprocess.run):
         if code == 0:
             keep_session(root, session.get('refresh_token'))
             keep_targets(root, os.environ.get('GELATO_CONNECT_TARGETS', ''))
+            if grok:
+                keep_grok(root)
+                link_grok(root, home)  # explicit: a failure is the run's failure
+            else:
+                try:
+                    sync_grok(root, home)
+                except Exception as e:
+                    print('warning: grok links not updated: %s' % e, file=sys.stderr)
         return code
     except SetupError as e:
         print(e, file=sys.stderr)

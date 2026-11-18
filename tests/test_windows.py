@@ -277,7 +277,7 @@ class SetupOnWindowsTests(WinCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             self.assertEqual(setup.main(['--targets', 'evil'], signin=lambda: TOKEN), 1)
             self.assertEqual(setup.main(['--targets', 'codex'], signin=lambda: TOKEN), 0, err.getvalue())
-        self.assertIn('usage: setup.py [--targets claude|codex]', err.getvalue())
+        self.assertIn('usage: setup.py [--grok] [--targets claude|codex]', err.getvalue())
         self.assertFalse(os.path.exists(self.log))  # claude is on PATH but was not asked for
         self.assertTrue(install_win.is_link(os.path.join(self.codex, 'skills', APIS + '-skill')))
         with open(os.path.join(self.root, 'targets')) as f:

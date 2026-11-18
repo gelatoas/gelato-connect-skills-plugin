@@ -28,6 +28,12 @@ In Codex (use the folder that contains this `SKILL.md`):
 GELATO_CONNECT_TARGETS=codex bash "<folder of this SKILL.md>/scripts/setup.sh"
 ```
 
+In Grok Build (macOS/Linux only; add `--grok`, it links the skills into `~/.grok/skills` on top of the usual registration and keeps them linked after updates):
+
+```bash
+bash "<folder of this SKILL.md>/scripts/setup.sh" --grok
+```
+
 On native Windows (no WSL), run the Python entry point instead; it needs no bash, curl or unzip. Pass the assistant as an argument (works in PowerShell and Git Bash alike). In Claude Code:
 
 ```powershell
@@ -49,7 +55,7 @@ Expect a permission prompt. In Codex it needs approval because it opens a browse
 - Opens the browser so the user signs in with their Gelato account. Never ask for or handle the password. If the browser does not open, the script prints a sign-in link: give it to the user.
 - Downloads the account's skills bundle from the Gelato Connect API and checks it holds exactly the two packages.
 - Installs them under `~/.gelato-connect-skills`.
-- Registers them only with the assistant that runs setup: Claude Code (local marketplace `gelato-connect`) or Codex (links in `~/.codex/skills`; junctions on Windows). Someone who wants both runs setup in each assistant; the background update then keeps both current.
+- Registers them only with the assistant that runs setup: Claude Code (local marketplace `gelato-connect`) or Codex (links in `~/.codex/skills`; junctions on Windows). Someone who wants both runs setup in each assistant; the background update then keeps both current. With `--grok` it also symlinks each skill folder into `~/.grok/skills` (never replacing an entry that is not its own link) and remembers that in `grok.json`; Windows refuses `--grok`.
 - Stores only a renewable sign-in (`session.json`, owner-only; on Windows it relies on your user folder's permissions) for the background updater, never the access token; see above for how to opt out.
 
 ## Afterwards

@@ -31,6 +31,14 @@ The setup runs in Claude Code (the terminal app, or the Code tab of the Claude
 desktop app) and in Codex. Claude desktop's Chat and Cowork modes do not load
 plugins installed with the `claude` command.
 
+Grok Build (macOS and Linux): the setup skill is run with `--grok`
+(`setup.sh --grok`). That is added on top of the normal registration: skills are
+symlinked into `~/.grok/skills`, the choice is kept in `grok.json` in the install
+folder, and the links are reconciled after every update. Entries in that folder that
+are not our links are never touched. Windows refuses `--grok`. To turn Grok off, delete
+`grok.json` and the links we made in `~/.grok/skills`. With `GELATO_CONNECT_NO_AUTO_UPDATE`
+set, the links are only refreshed by rerunning `setup.sh --grok`.
+
 Then ask your assistant: "Set up the Gelato Connect skills."
 
 ## What is public here
