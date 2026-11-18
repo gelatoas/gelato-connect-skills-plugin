@@ -42,6 +42,7 @@ VERSION = re.compile(r'[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}')
 LINK = re.compile(r'/skills/download/[0-9a-f]{64}')
 DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
 USER_AGENT = 'gelato-connect-setup/0.1'  # auth.gelato.com's Cloudflare answers 403 to urllib's default
+ASSISTANTS = ('claude', 'codex')
 FORBIDDEN = '.gelato-connect'  # never touched; the install folder is .gelato-connect-skills
 
 
@@ -340,12 +341,14 @@ def unpack_bundle(raw, dest):
 
 
 # --- installer --------------------------------------------------------------
-def run_installer(skills, token, run=subprocess.run):
+def run_installer(skills, token, run=subprocess.run, targets=None):
     installer = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'install.sh')
     cmd = ['bash', installer] + [s[k] for s in skills for k in ('name', 'version', 'url', 'digest')]
     try:
         # the package links are on this machine: a proxy from the environment must not get them
         env = dict(os.environ, NO_PROXY='localhost,127.0.0.1', no_proxy='localhost,127.0.0.1')
+        if targets:
+            env['GELATO_CONNECT_TARGETS'] = targets
         p = run(cmd, capture_output=True, text=True, timeout=1800, env=env)
     except (OSError, subprocess.TimeoutExpired):
         raise SetupError('error: the installer could not run to the end') from None
@@ -361,7 +364,7 @@ def run_installer(skills, token, run=subprocess.run):
     return p.returncode
 
 
-def install_bundle(raw, token, run=subprocess.run):
+def install_bundle(raw, token, run=subprocess.run, targets=None):
     """Unpack the bundle and hand install.sh the two packages from a short-lived server on this machine."""
     with tempfile.TemporaryDirectory() as tmp:
         skills = unpack_bundle(raw, tmp)
@@ -393,7 +396,7 @@ def install_bundle(raw, token, run=subprocess.run):
         thread.start()
         try:
             base = 'http://localhost:%d/%s/' % (server.server_address[1], secret)
-            return run_installer([dict(s, url='%s%s.zip' % (base, s['name'])) for s in skills], token, run)
+            return run_installer([dict(s, url='%s%s.zip' % (base, s['name'])) for s in skills], token, run, targets)
         finally:
             server.shutdown()
             server.server_close()
@@ -440,6 +443,34 @@ def _remove(root, name):
         pass
 
 
+def _words(value):
+    """The assistant names in a comma or space list, or [] if there is none or any is unknown."""
+    words = str(value).replace(',', ' ').split()
+    return words if words and all(w in ASSISTANTS for w in words) else []
+
+
+def _stored_targets(root):
+    try:
+        return _words((_read_json(os.path.join(root, 'targets'), private=True) or {}).get('targets', ''))
+    except (OSError, ValueError):
+        return []  # none or corrupt: install.sh then detects what is on PATH
+
+
+def _stored_for_installer(root):
+    """What to pass install.sh as GELATO_CONNECT_TARGETS when the caller set none: the assistants setup ran in so far."""
+    return None if os.environ.get('GELATO_CONNECT_TARGETS') else ','.join(_stored_targets(root)) or None
+
+
+def keep_targets(root, requested):
+    """After a good setup with explicit targets: remember them, joined with earlier ones, for the background update."""
+    try:
+        mine = _words(requested)
+        if mine:
+            _write_private(root, 'targets', {'targets': ','.join(sorted(set(mine) | set(_stored_targets(root))))})
+    except OSError:
+        pass  # the update then registers what it did before
+
+
 def _folders(home):
     """The install folder; refuses it and everything the installer opens if any is, or leads into, ~/.gelato-connect."""
     root = os.environ.get('GELATO_CONNECT_HOME') or os.path.join(home, '.gelato-connect-skills')
@@ -448,7 +479,7 @@ def _folders(home):
     # ponytail: links deeper inside an existing install are not walked; the installer replaces those folders.
     for folder in [root, codex, os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(home, '.claude'),
                    os.path.join(codex, 'skills')] + [os.path.join(root, n) for n in (
-                       'installed.json', 'installed.json.tmp', 'marketplace', 'marketplace/.claude-plugin',
+                       'installed.json', 'installed.json.tmp', 'targets', 'marketplace', 'marketplace/.claude-plugin',
                        'marketplace/.claude-plugin/marketplace.json', 'venv', 'venv/bin', 'venv/bin/python', '.lock',
                        'session.json', 'updated.json')] + [
                            os.environ[v] for v in ('TMPDIR', 'TEMP', 'TMP') if os.environ.get(v)]:  # temp files
@@ -514,7 +545,7 @@ def auto(run=subprocess.run, fetcher=fetch_bundle):
         if not any(n in old and v > old[n] for n, v in latest.items()):
             return 0  # the renewal alone keeps the sign-in alive
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            if install_bundle(fetcher(origin, token), token, run):
+            if install_bundle(fetcher(origin, token), token, run, _stored_for_installer(root)):
                 return 0
         now = _versions(_read_json(os.path.join(root, 'installed.json')))
         changed = {n: '.'.join(map(str, v)) for n, v in now.items() if v != old.get(n)}
@@ -538,9 +569,10 @@ def main(argv=None, signin=sign_in, fetcher=fetch_bundle, run=subprocess.run):
             _remove(root, 'session.json')  # opted out: no stored sign-in, whatever happens next
         session = {}
         token = signin(session=session) if signin is sign_in else signin()
-        code = install_bundle(fetcher(origin, token), token, run)
+        code = install_bundle(fetcher(origin, token), token, run, _stored_for_installer(root))
         if code == 0:
             keep_session(root, session.get('refresh_token'))
+            keep_targets(root, os.environ.get('GELATO_CONNECT_TARGETS', ''))
         return code
     except SetupError as e:
         print(e, file=sys.stderr)
