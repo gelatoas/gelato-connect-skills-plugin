@@ -16,11 +16,17 @@ New versions install automatically in the background. For that, setup keeps a re
 
 ## Command
 
+Install only for the assistant that runs setup. In Claude Code:
+
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/setup.sh"
+GELATO_CONNECT_TARGETS=claude bash "${CLAUDE_SKILL_DIR}/scripts/setup.sh"
 ```
 
-Claude Code substitutes the path. In Codex, if `${CLAUDE_SKILL_DIR}` is still literal text, use the folder that contains this `SKILL.md`.
+In Codex (use the folder that contains this `SKILL.md`):
+
+```bash
+GELATO_CONNECT_TARGETS=codex bash "<folder of this SKILL.md>/scripts/setup.sh"
+```
 
 Run it with a timeout of 600 seconds (sign-in waits up to 240 seconds; installing takes about 1-2 minutes).
 
@@ -33,7 +39,7 @@ Expect a permission prompt. In Codex it needs approval because it opens a browse
 - Opens the browser so the user signs in with their Gelato account. Never ask for or handle the password. If the browser does not open, the script prints a sign-in link: give it to the user.
 - Downloads the account's skills bundle from the Gelato Connect API and checks it holds exactly the two packages.
 - Installs them under `~/.gelato-connect-skills`.
-- Registers them with Claude Code (local marketplace `gelato-connect`) and/or Codex (links in `~/.codex/skills`).
+- Registers them only with the assistant that runs setup: Claude Code (local marketplace `gelato-connect`) or Codex (links in `~/.codex/skills`). Someone who wants both runs setup in each assistant; the background update then keeps both current.
 - Stores only a renewable sign-in (`session.json`, owner-only) for the background updater, never the access token; see above for how to opt out.
 
 ## Afterwards
