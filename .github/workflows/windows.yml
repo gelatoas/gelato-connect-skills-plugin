@@ -27,3 +27,4 @@ jobs:
         run: |
           py -3 -I plugins\gelato-connect-setup\skills\setup\scripts\install_win.py
           if ($LASTEXITCODE -ne 1) { throw "expected the usage error (exit 1), got $LASTEXITCODE" }
+          exit 0  # the step otherwise ends with the exit code of the last command
