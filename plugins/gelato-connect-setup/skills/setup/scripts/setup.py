@@ -248,8 +248,19 @@ def sign_in(*, timeout=240, browser_open=None, fetch=None, server_factory=Thread
 
 
 # --- skills bundle ----------------------------------------------------------
-def _fail():
-    raise SetupError('error: could not get the skills; sign in again or ask your Gelato contact for access')
+def _fail(why=None):
+    """`why` names the failure so a user's report is enough to tell no access from a blocked network."""
+    refused = not why or (why.startswith(('HTTP 401', 'HTTP 403')) and 'request id' in why)  # the API itself said no
+    hint = ('sign in again or ask your Gelato contact for access' if refused
+            else 'check your internet connection, VPN or proxy and try again')
+    raise SetupError('error: could not get the skills%s; %s' % (' (%s)' % why if why else '', hint))
+
+
+def _http_why(e):
+    """'HTTP 403, request id …' when the Gelato API answered; without a request id the answer came from the network
+    in between (Cloudflare, a proxy), and the request never reached the API."""
+    rid = e.headers.get('Request-Id') if e.headers else None
+    return 'HTTP %d, %s' % (e.code, 'request id %s' % rid[:64] if rid else 'not from the Gelato API: blocked on the way')
 
 
 def _get(origin, path, token, limit, opener):
@@ -266,9 +277,11 @@ def _get(origin, path, token, limit, opener):
             return raw
     except urllib.error.HTTPError as e:
         if e.code != 404:
-            _fail()
-    except (OSError, ValueError):
-        _fail()
+            _fail(_http_why(e))
+    except ValueError:
+        _fail('unexpected reply')
+    except OSError as e:  # no answer at all: DNS, TLS, proxy, timeout
+        _fail('network error: %s' % str(getattr(e, 'reason', e))[:200])
 
 
 def _data(raw):

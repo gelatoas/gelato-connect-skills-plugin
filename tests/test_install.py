@@ -110,6 +110,31 @@ class InstallTests(EnvCase):
         code, out, err = self.run_main(api, run=fake)
         self.assertEqual((code, out, err), (1, 'ok [redacted]', 'bad [redacted]'))
 
+    def test_should_say_why_the_skills_could_not_be_fetched(self):
+        api = fake_api(skills=helpers.make_skills(), skills_status=403)  # no Request-Id: blocked before the API
+        self.addCleanup(api.close)
+        code, out, err = self.run_main(api)
+        self.assertEqual(code, 1)
+        self.assertIn('(HTTP 403, not from the Gelato API: blocked on the way); check your internet connection', err)
+        api.close()  # nothing listening any more: a network error, not an access problem
+        code, out, err = self.run_main(api)
+        self.assertIn('could not get the skills (network error: ', err)
+        self.assertIn('VPN or proxy', err)
+        self.assertNotIn(TOKEN, err)
+
+    def test_should_show_the_request_id_when_the_api_refuses(self):
+        import email.message
+        hdrs = email.message.Message()
+        hdrs['Request-Id'] = 'rid-1'
+
+        class Refuse:
+            def open(self, req, timeout):
+                raise __import__('urllib.error').error.HTTPError(req.full_url, 403, 'Forbidden', hdrs, None)
+        with self.assertRaises(setup.SetupError) as c:
+            setup._get('https://x', '/skills', TOKEN, 10, Refuse())
+        self.assertEqual(str(c.exception), 'error: could not get the skills (HTTP 403, request id rid-1); '
+                                           'sign in again or ask your Gelato contact for access')
+
 
 class TargetsTests(EnvCase):
     """Setup registers only the assistant that runs it, and the background update keeps to that."""
