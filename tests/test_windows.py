@@ -60,7 +60,7 @@ class WinCase(unittest.TestCase):
     """Temporary home, stub claude first on PATH, no network; works with Windows and POSIX paths."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
+        self.tmp = tempfile.mkdtemp(prefix='gc user ')  # a space, like C:\\Users\\Denise Zanotti
         self.addCleanup(lambda: __import__('shutil').rmtree(self.tmp, ignore_errors=True))
         self.home, self.bin = os.path.join(self.tmp, 'home'), os.path.join(self.tmp, 'bin')
         os.makedirs(self.home)
@@ -158,10 +158,11 @@ class InstallWinTests(WinCase):
         code, out, err = self.install(self.packages())
         self.assertEqual(code, 0, err)
         with open(self.log) as f:
-            calls = [line.split() for line in f.read().splitlines()]
+            calls = f.read()
         market = os.path.join(self.root, 'marketplace')
-        self.assertIn(['plugin', 'marketplace', 'add', market], calls)
-        self.assertIn(['plugin', 'install', APIS + '@gelato-connect'], calls)
+        self.assertIn('plugin marketplace add ', calls)
+        self.assertIn(market, calls)  # quoted by Windows, as it holds a space
+        self.assertIn('plugin install %s@gelato-connect' % APIS, calls)
         with open(os.path.join(market, '.claude-plugin', 'marketplace.json')) as f:
             self.assertEqual([p['source'] for p in json.load(f)['plugins']], ['./' + APIS, './' + KNOW])
         self.assertFalse(os.path.exists(os.path.join(self.codex, 'skills')))  # only the named assistant
@@ -202,6 +203,31 @@ class InstallWinTests(WinCase):
         code, _, err = self.install(self.packages())
         self.assertEqual((code, "'claude' is not on PATH" in err), (1, True))
 
+    def test_should_find_claude_in_its_own_install_folder_when_not_on_path(self):
+        os.environ['PATH'] = os.path.dirname(sys.executable)
+        native = os.path.join(self.home, '.local', 'bin', 'claude.exe' if NT else 'claude')
+        self.assertIsNone(install_win.find('claude'))
+        os.makedirs(os.path.dirname(native))
+        open(native, 'w').close()
+        self.assertEqual(install_win.find('claude'), native)
+        self.assertIsNone(install_win.find('codex'))
+
+    @unittest.skipUnless(os.environ.get('GELATO_CONNECT_NETWORK_TESTS'), 'downloads from PyPI (set GELATO_CONNECT_NETWORK_TESTS=1)')
+    def test_should_install_the_python_dependencies_of_a_package_into_a_real_venv(self):
+        pkg = io.BytesIO()
+        with zipfile.ZipFile(pkg, 'w') as z:
+            z.writestr('%s/.claude-plugin/plugin.json' % APIS, json.dumps({'name': APIS, 'version': '1.2.0'}))
+            z.writestr('%s/skills/%s-skill/SKILL.md' % (APIS, APIS), '---\nname: x\n---\nx\n')
+            z.writestr('%s/pyproject.toml' % APIS, '[build-system]\nrequires = ["setuptools>=68"]\n'
+                       'build-backend = "setuptools.build_meta"\n\n[project]\nname = "gc-test-pkg"\nversion = "1.2.0"\n'
+                       'dependencies = ["cryptography>=42", "jsonschema>=4.23"]\n\n[tool.setuptools]\npackages = []\n')
+        code, out, err = self.install(self.packages(**{'/%s.zip' % APIS: pkg.getvalue()}))
+        self.assertEqual(code, 0, err)
+        self.assertIn('installed python dependencies: ' + APIS, out)
+        py = install_win.venv_python(os.path.join(self.root, 'venv'))
+        p = subprocess.run([py, '-c', 'import cryptography, jsonschema'], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
     def test_should_build_a_real_venv_with_the_layout_of_this_os(self):
         code, out, err = self.install(self.packages())  # no stub: the installer makes the venv itself
         self.assertEqual(code, 0, err)
@@ -241,6 +267,21 @@ class SetupOnWindowsTests(WinCase):
             self.assertEqual(json.load(f), {'targets': 'codex'})  # remembered, for the background update
         for text in (out.getvalue(), err.getvalue()):
             self.assertNotIn('/skills/download/', text)
+
+    def test_should_take_the_assistant_as_an_argument_in_any_shell(self):
+        del os.environ['GELATO_CONNECT_TARGETS']
+        api = fake_api(skills=helpers.make_skills())
+        self.addCleanup(api.close)
+        os.environ['GELATO_CONNECT_SKILLS_HOST'] = api.origin
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(setup.main(['--targets', 'evil'], signin=lambda: TOKEN), 1)
+            self.assertEqual(setup.main(['--targets', 'codex'], signin=lambda: TOKEN), 0, err.getvalue())
+        self.assertIn('usage: setup.py [--targets claude|codex]', err.getvalue())
+        self.assertFalse(os.path.exists(self.log))  # claude is on PATH but was not asked for
+        self.assertTrue(install_win.is_link(os.path.join(self.codex, 'skills', APIS + '-skill')))
+        with open(os.path.join(self.root, 'targets')) as f:
+            self.assertEqual(json.load(f), {'targets': 'codex'})
 
     def test_should_store_and_read_the_sign_in_without_posix_calls(self):
         setup._write_private(self.root if os.path.isdir(self.root) else os.makedirs(self.root) or self.root, 'session.json', {'refresh_token': 'r'})

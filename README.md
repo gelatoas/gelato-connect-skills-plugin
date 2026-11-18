@@ -27,6 +27,10 @@ newer (`py -3`) is needed; setup uses `install_win.py`, a Python installer, inst
 of bash. The session-start update check needs Git Bash for Claude Code (its
 default shell on Windows) and runs through `py -3`.
 
+The setup runs in Claude Code (the terminal app, or the Code tab of the Claude
+desktop app) and in Codex. Claude desktop's Chat and Cowork modes do not load
+plugins installed with the `claude` command.
+
 Then ask your assistant: "Set up the Gelato Connect skills."
 
 ## What is public here
