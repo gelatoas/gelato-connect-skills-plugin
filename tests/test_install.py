@@ -111,5 +111,63 @@ class InstallTests(EnvCase):
         self.assertEqual((code, out, err), (1, 'ok [redacted]', 'bad [redacted]'))
 
 
+class TargetsTests(EnvCase):
+    """Setup registers only the assistant that runs it, and the background update keeps to that."""
+
+    def setUp(self):
+        super().setUp()
+        self.stub_venv()
+        self.claude_log = os.path.join(self.tmp, 'claude.log')
+        with open(os.path.join(self.bin, 'claude'), 'w') as f:  # records a call; lists nothing, so it adds
+            f.write('#!/bin/sh\necho "$@" >> "%s"\n' % self.claude_log)
+        self.targets = os.path.join(self.root, 'targets')
+
+    def setup_for(self, targets):
+        """Run setup as the given assistant (None: no GELATO_CONNECT_TARGETS), then report who got registered."""
+        if targets is None:
+            del os.environ['GELATO_CONNECT_TARGETS']
+        else:
+            os.environ['GELATO_CONNECT_TARGETS'] = targets
+        api = fake_api()
+        self.addCleanup(api.close)
+        code, out, err = self.run_main(api)
+        self.assertEqual(code, 0, err)
+
+    def registered(self):
+        codex = os.path.islink(os.path.join(self.home, '.codex', 'skills', helpers.APIS + '-skill'))
+        return sorted((['claude'] if os.path.exists(self.claude_log) else []) + (['codex'] if codex else []))
+
+    def stored(self):
+        with open(self.targets) as f:
+            return json.load(f)['targets']
+
+    def test_should_register_only_the_named_assistant_and_remember_it(self):
+        self.setup_for('codex')
+        self.assertEqual((self.registered(), self.stored()), (['codex'], 'codex'))
+
+    def test_should_keep_to_the_remembered_assistant_without_the_variable(self):
+        self.setup_for('codex')
+        self.setup_for(None)
+        self.assertEqual((self.registered(), self.stored()), (['codex'], 'codex'))
+
+    def test_should_register_both_after_running_setup_in_each(self):
+        self.setup_for('claude')
+        self.assertEqual(self.registered(), ['claude'])
+        self.setup_for('codex')
+        self.assertEqual((self.registered(), self.stored()), (['claude', 'codex'], 'claude,codex'))
+
+    def test_should_detect_every_assistant_on_path_when_nothing_is_remembered(self):
+        self.setup_for(None)
+        self.assertEqual((self.registered(), os.path.exists(self.targets)), (['claude', 'codex'], False))
+
+    def test_should_ignore_a_corrupt_targets_file(self):
+        os.makedirs(self.root, exist_ok=True)
+        with open(self.targets, 'w') as f:
+            f.write('{"targets": "claude,evil"}')
+        os.chmod(self.targets, 0o600)
+        self.setup_for(None)
+        self.assertEqual(self.registered(), ['claude', 'codex'])
+
+
 if __name__ == '__main__':
     unittest.main()
