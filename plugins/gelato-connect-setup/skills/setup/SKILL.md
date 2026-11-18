@@ -28,17 +28,15 @@ In Codex (use the folder that contains this `SKILL.md`):
 GELATO_CONNECT_TARGETS=codex bash "<folder of this SKILL.md>/scripts/setup.sh"
 ```
 
-On native Windows (PowerShell, no WSL; needs Python 3.9 or newer, `py -3`), run the Python entry point instead; the installer is Python too, so no bash, curl or unzip is needed. In Claude Code:
+On native Windows (no WSL), run the Python entry point instead; it needs no bash, curl or unzip. Pass the assistant as an argument (works in PowerShell and Git Bash alike). In Claude Code:
 
 ```powershell
-$env:GELATO_CONNECT_TARGETS = 'claude'; py -3 -I "${CLAUDE_SKILL_DIR}\scripts\setup.py"
+py -3 -I "${CLAUDE_SKILL_DIR}\scripts\setup.py" --targets claude
 ```
 
-In Codex:
+In Codex: `py -3 -I "<folder of this SKILL.md>\scripts\setup.py" --targets codex`.
 
-```powershell
-$env:GELATO_CONNECT_TARGETS = 'codex'; py -3 -I "<folder of this SKILL.md>\scripts\setup.py"
-```
+If `py` is not found, try `python` instead of `py -3`. If neither is Python 3.9 or newer, tell the user, and only after they agree install it with `winget install -e --id Python.Python.3.12`, then open a new terminal and run setup.
 
 Run it with a timeout of 600 seconds (sign-in waits up to 240 seconds; installing takes about 1-2 minutes).
 

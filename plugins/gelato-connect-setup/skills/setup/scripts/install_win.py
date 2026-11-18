@@ -193,13 +193,21 @@ def parse(args):
     return pkgs
 
 
+def find(tool):
+    """The tool on PATH, else Claude Code's own install folder: its Windows installer does not always reach PATH."""
+    if shutil.which(tool):
+        return shutil.which(tool)
+    native = os.path.join(os.path.expanduser('~'), '.local', 'bin', tool + ('.exe' if WINDOWS else ''))
+    return native if tool == 'claude' and os.path.isfile(native) else None
+
+
 def targets():
     wanted = os.environ.get('GELATO_CONNECT_TARGETS')
     if not wanted:
-        return [t for t in ('claude', 'codex') if shutil.which(t)]
+        return [t for t in ('claude', 'codex') if find(t)]
     out = []
     for t in wanted.replace(',', ' ').split():
-        if t == 'claude' and not shutil.which('claude'):
+        if t == 'claude' and not find('claude'):
             raise Fail("target claude requested but 'claude' is not on PATH")
         if t not in ('claude', 'codex'):
             raise Fail("unknown target '%s' (use claude, codex)" % t)
@@ -268,7 +276,7 @@ def install(args):
             say('unpacked: %s %s' % (n, v))
         failed = False
         for t in chosen:
-            if t == 'claude' and not register_claude(root, [p[0] for p in pkgs], [p[1] for p in pkgs], shutil.which('claude')):
+            if t == 'claude' and not register_claude(root, [p[0] for p in pkgs], [p[1] for p in pkgs], find('claude')):
                 failed = True
                 say('claude: marketplace registration failed; start Claude Code with:')
                 for p in pkgs:

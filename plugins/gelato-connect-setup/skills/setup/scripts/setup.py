@@ -599,8 +599,11 @@ def main(argv=None, signin=sign_in, fetcher=fetch_bundle, run=subprocess.run):
     if argv == ['--auto']:
         return auto(run, fetcher)
     try:
-        if argv:
-            raise SetupError('usage: setup.sh (no arguments)')
+        # --targets: same as GELATO_CONNECT_TARGETS, for shells where setting a variable is spelled differently (PowerShell, Git Bash)
+        if argv and len(argv) == 2 and argv[0] == '--targets' and _words(argv[1]):
+            os.environ['GELATO_CONNECT_TARGETS'] = argv[1]
+        elif argv:
+            raise SetupError('usage: setup.py [--targets claude|codex]')
         home = os.path.expanduser('~')
         root = _folders(home)
         origin = api_origin(os.environ.get('GELATO_CONNECT_SKILLS_HOST'))

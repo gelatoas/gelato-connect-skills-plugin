@@ -21,6 +21,8 @@ jobs:
       # The older tests assume bash and POSIX stubs; test_windows.py covers the Windows install path:
       # a real venv, junctions for Codex, a claude.cmd shim, and setup.py handing over to install_win.py.
       - name: Unit tests and install into a temp folder
+        env:
+          GELATO_CONNECT_NETWORK_TESTS: '1'  # also pip-installs real dependencies (cryptography, jsonschema) into the venv
         run: python -m unittest discover -s tests -p test_windows.py -v
       - name: install_win.py under Windows PowerShell 5.1
         shell: powershell
