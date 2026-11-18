@@ -28,6 +28,18 @@ In Codex (use the folder that contains this `SKILL.md`):
 GELATO_CONNECT_TARGETS=codex bash "<folder of this SKILL.md>/scripts/setup.sh"
 ```
 
+On native Windows (PowerShell, no WSL; needs Python 3.9 or newer, `py -3`), run the Python entry point instead; the installer is Python too, so no bash, curl or unzip is needed. In Claude Code:
+
+```powershell
+$env:GELATO_CONNECT_TARGETS = 'claude'; py -3 -I "${CLAUDE_SKILL_DIR}\scripts\setup.py"
+```
+
+In Codex:
+
+```powershell
+$env:GELATO_CONNECT_TARGETS = 'codex'; py -3 -I "<folder of this SKILL.md>\scripts\setup.py"
+```
+
 Run it with a timeout of 600 seconds (sign-in waits up to 240 seconds; installing takes about 1-2 minutes).
 
 ## Permissions
@@ -39,8 +51,8 @@ Expect a permission prompt. In Codex it needs approval because it opens a browse
 - Opens the browser so the user signs in with their Gelato account. Never ask for or handle the password. If the browser does not open, the script prints a sign-in link: give it to the user.
 - Downloads the account's skills bundle from the Gelato Connect API and checks it holds exactly the two packages.
 - Installs them under `~/.gelato-connect-skills`.
-- Registers them only with the assistant that runs setup: Claude Code (local marketplace `gelato-connect`) or Codex (links in `~/.codex/skills`). Someone who wants both runs setup in each assistant; the background update then keeps both current.
-- Stores only a renewable sign-in (`session.json`, owner-only) for the background updater, never the access token; see above for how to opt out.
+- Registers them only with the assistant that runs setup: Claude Code (local marketplace `gelato-connect`) or Codex (links in `~/.codex/skills`; junctions on Windows). Someone who wants both runs setup in each assistant; the background update then keeps both current.
+- Stores only a renewable sign-in (`session.json`, owner-only; on Windows it relies on your user folder's permissions) for the background updater, never the access token; see above for how to opt out.
 
 ## Afterwards
 
