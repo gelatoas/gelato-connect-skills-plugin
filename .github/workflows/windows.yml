@@ -1,0 +1,29 @@
+name: windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # The older tests assume bash and POSIX stubs; test_windows.py covers the Windows install path:
+      # a real venv, junctions for Codex, a claude.cmd shim, and setup.py handing over to install_win.py.
+      - name: Unit tests and install into a temp folder
+        run: python -m unittest discover -s tests -p test_windows.py -v
+      - name: install_win.py under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          py -3 -I plugins\gelato-connect-setup\skills\setup\scripts\install_win.py
+          if ($LASTEXITCODE -ne 1) { throw "expected the usage error (exit 1), got $LASTEXITCODE" }

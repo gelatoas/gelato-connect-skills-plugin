@@ -44,6 +44,7 @@ DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
 USER_AGENT = 'gelato-connect-setup/0.1'  # auth.gelato.com's Cloudflare answers 403 to urllib's default
 ASSISTANTS = ('claude', 'codex')
 FORBIDDEN = '.gelato-connect'  # never touched; the install folder is .gelato-connect-skills
+WINDOWS = os.name == 'nt'  # native Windows: no bash, symlinks, O_NOFOLLOW, dir_fd, SIGALRM or uid
 
 
 class SetupError(Exception):
@@ -52,6 +53,9 @@ class SetupError(Exception):
 
 # --- path guard -------------------------------------------------------------
 def _parts(p):
+    if WINDOWS:
+        p = p[4:] if p.startswith('\\\\?\\') else p
+        return tuple(c.casefold() for c in re.split(r'[\\/]', p) if c)
     return tuple(c.casefold() for c in p.split('/') if c)
 
 
@@ -66,6 +70,10 @@ def refuse_forbidden(path, home):
     def refuse():
         raise SetupError('error: a configured folder is inside ~/%s, which this tool never touches' % FORBIDDEN)
 
+    if WINDOWS:  # ponytail: no hand-walk of links here (no bash `cd` reading of '..'); the spelled and the resolved path are checked
+        if any(bad(p) for p in (os.path.abspath(path), os.path.realpath(path))):
+            refuse()
+        return
     path = os.path.join(os.getcwd(), path)
     # Both readings of '..': the OS applies it after symlinks, bash's `cd` (install.sh) before them.
     for start in (path, os.path.normpath(path)):
@@ -342,14 +350,16 @@ def unpack_bundle(raw, dest):
 
 # --- installer --------------------------------------------------------------
 def run_installer(skills, token, run=subprocess.run, targets=None):
-    installer = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'install.sh')
-    cmd = ['bash', installer] + [s[k] for s in skills for k in ('name', 'version', 'url', 'digest')]
+    here = os.path.dirname(os.path.abspath(__file__))
+    # Windows has no bash, curl or unzip: install_win.py is the same installer in Python (utf8: paths may hold any character).
+    cmd = ([sys.executable, '-I', '-X', 'utf8', os.path.join(here, 'install_win.py')] if WINDOWS
+           else ['bash', os.path.join(here, 'install.sh')]) + [s[k] for s in skills for k in ('name', 'version', 'url', 'digest')]
     try:
         # the package links are on this machine: a proxy from the environment must not get them
         env = dict(os.environ, NO_PROXY='localhost,127.0.0.1', no_proxy='localhost,127.0.0.1')
         if targets:
             env['GELATO_CONNECT_TARGETS'] = targets
-        p = run(cmd, capture_output=True, text=True, timeout=1800, env=env)
+        p = run(cmd, capture_output=True, text=True, timeout=1800, env=env, **({'encoding': 'utf-8', 'errors': 'replace'} if WINDOWS else {}))
     except (OSError, subprocess.TimeoutExpired):
         raise SetupError('error: the installer could not run to the end') from None
 
@@ -404,14 +414,21 @@ def install_bundle(raw, token, run=subprocess.run, targets=None):
 
 
 # --- stored sign-in (session.json) and automatic update ----------------------
+def _is_link(st):
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 def _read_json(path, private=False):
-    """A small JSON object from a regular file, never through a symlink; `private`: ours and mode 0600 only. Else None."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    """A small JSON object from a regular file, never through a symlink; `private`: ours and mode 0600 only (on Windows the
+    folder's own permissions apply). Else None."""
+    if WINDOWS and _is_link(os.lstat(path)):  # no O_NOFOLLOW there
+        return None
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
     with os.fdopen(fd, 'rb') as fh:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_size > 16 * 1024:
             return None
-        if private and (st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600):
+        if private and not WINDOWS and (st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600):
             return None
         value = json.loads(fh.read(16 * 1024 + 1).decode('utf-8'))
     return value if isinstance(value, dict) else None
@@ -419,6 +436,18 @@ def _read_json(path, private=False):
 
 def _write_private(root, name, value):
     """Atomic 0600 write of a JSON file in `root`: temp file created exclusively in the pinned folder, then renamed."""
+    if WINDOWS:  # no dir_fd or O_NOFOLLOW: refuse a linked folder, create exclusively beside the target, rename
+        if _is_link(os.lstat(root)):
+            raise OSError('linked folder')
+        tmp = os.path.join(root, '%s.%d.tmp' % (name, os.getpid()))
+        try:
+            with open(tmp, 'x') as fh:
+                json.dump(value, fh)
+            os.replace(tmp, os.path.join(root, name))
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(tmp)
+        return
     dirfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     tmp = '%s.%d.tmp' % (name, os.getpid())
     try:
@@ -480,7 +509,8 @@ def _folders(home):
     for folder in [root, codex, os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(home, '.claude'),
                    os.path.join(codex, 'skills')] + [os.path.join(root, n) for n in (
                        'installed.json', 'installed.json.tmp', 'targets', 'marketplace', 'marketplace/.claude-plugin',
-                       'marketplace/.claude-plugin/marketplace.json', 'venv', 'venv/bin', 'venv/bin/python', '.lock',
+                       'marketplace/.claude-plugin/marketplace.json', 'venv', 'venv/bin', 'venv/bin/python', 'venv/Scripts',
+                       'venv/Scripts/python.exe', '.lock',
                        'session.json', 'updated.json')] + [
                            os.environ[v] for v in ('TMPDIR', 'TEMP', 'TMP') if os.environ.get(v)]:  # temp files
         refuse_forbidden(folder, home)
@@ -505,10 +535,19 @@ def keep_session(root, refresh_token):
         pass  # the update then stays a notice; setup itself succeeded
 
 
+def _hard_stop(seconds):
+    if hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, lambda *a: os._exit(0))
+        signal.alarm(seconds)
+    else:  # Windows
+        t = threading.Timer(seconds, os._exit, (0,))
+        t.daemon = True  # must not keep a finished run alive
+        t.start()
+
+
 def auto(run=subprocess.run, fetcher=fetch_bundle):
     """Background update: renew the stored sign-in, install a newer published version. Silent, never opens a browser, exits 0."""
-    signal.signal(signal.SIGALRM, lambda *a: os._exit(0))
-    signal.alarm(300)
+    _hard_stop(300)
     try:
         home = os.path.expanduser('~')
         root = _folders(home)
@@ -586,4 +625,7 @@ def main(argv=None, signin=sign_in, fetcher=fetch_bundle, run=subprocess.run):
 
 
 if __name__ == '__main__':
+    if WINDOWS:  # a console code page that cannot show a character must not crash the run
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(errors='replace')
     sys.exit(main(sys.argv[1:]))

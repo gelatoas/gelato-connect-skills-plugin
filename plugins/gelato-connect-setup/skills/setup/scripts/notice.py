@@ -5,6 +5,7 @@ input and prints only validated version strings. At most once a day it starts a
 detached `notice.py --check`, which asks the server which versions are published
 (no token, no personal data) and writes latest.json. Always exits 0.
 """
+import contextlib
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -22,10 +24,31 @@ MAX = 64 * 1024
 DAY = 24 * 3600
 API_ORIGIN = "https://api.gelatoconnect.gelato.com"  # same as setup.py (not importable under -I); keep in sync
 LOCAL = re.compile(r"(localhost|127\.0\.0\.1)(:[0-9]{1,5})?")
+WINDOWS = os.name == "nt"  # no bash, O_NOFOLLOW, dir_fd, SIGALRM or execv there; same switch as setup.py
+NOFOLLOW, NONBLOCK = getattr(os, "O_NOFOLLOW", 0), getattr(os, "O_NONBLOCK", 0)
+_timer = None
 
 
 def parts(path):
+    if WINDOWS:
+        path = path[4:] if path.startswith("\\\\?\\") else path
+        return [p.casefold() for p in re.split(r"[\\/]", path) if p]
     return [p.casefold() for p in path.split("/") if p]
+
+
+def is_link(st):
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def hard_stop(seconds):
+    """Kill this process after `seconds`: the socket timeout alone does not bound a slow-drip response."""
+    global _timer
+    if hasattr(signal, "SIGALRM"):
+        signal.alarm(seconds)
+    else:  # Windows
+        _timer = threading.Timer(seconds, os._exit, (0,))
+        _timer.daemon = True
+        _timer.start()
 
 
 def under_forbidden(root):
@@ -36,6 +59,8 @@ def under_forbidden(root):
     def bad(p):
         return any(parts(p)[: len(b)] == b for b in banned)
 
+    if WINDOWS:  # ponytail: no hand-walk of links here; the spelled and the resolved path are checked
+        return any(bad(p) for p in (os.path.abspath(root), os.path.realpath(root)))
     todo, cur, hops = os.path.join(os.getcwd(), root).split("/"), "/", 0  # no normpath: ".." applies after symlinks
     while todo:  # resolve by hand: check every prefix before the first filesystem call on it
         comp = todo.pop(0)
@@ -65,7 +90,9 @@ def under_forbidden(root):
 
 
 def load(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)  # no symlink, never blocks on a pipe
+    if WINDOWS and is_link(os.lstat(path)):  # no O_NOFOLLOW there
+        return None
+    fd = os.open(path, os.O_RDONLY | NOFOLLOW | NONBLOCK)  # no symlink, never blocks on a pipe
     with os.fdopen(fd, "rb") as fh:
         st = os.fstat(fd)  # the file we opened, not one swapped in after a check
         if not stat.S_ISREG(st.st_mode) or st.st_size > MAX:
@@ -104,9 +131,9 @@ def due(root):
             return False
     except FileNotFoundError:
         pass
-    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | NOFOLLOW | NONBLOCK, 0o600)
     try:
-        os.utime(fd)
+        os.utime(marker if WINDOWS else fd)  # utime on a descriptor is not available on Windows
     finally:
         os.close(fd)
     return True
@@ -118,8 +145,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def check(root):
-    signal.alarm(30)  # hard stop: the socket timeout alone does not bound a slow-drip response
-    dirfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)  # pin the checked folder before the request
+    hard_stop(30)
+    if WINDOWS and is_link(os.lstat(root)):
+        return
+    dirfd = None if WINDOWS else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)  # pin the checked folder before the request
     base = origin()
     handlers = [NoRedirect()] + ([urllib.request.ProxyHandler({})] if base.startswith("http://") else [])
     req = urllib.request.Request(base + "/skills/versions", headers={"User-Agent": "gelato-connect-setup/0.1"})
@@ -133,6 +162,15 @@ def check(root):
     if not keep:
         return
     tmp = "latest.json.%d.tmp" % os.getpid()
+    if WINDOWS:  # no dir_fd: create exclusively beside the target, rename
+        try:
+            with open(os.path.join(root, tmp), "x") as fh:
+                json.dump({"versions": keep}, fh)
+            os.replace(os.path.join(root, tmp), os.path.join(root, "latest.json"))
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(os.path.join(root, tmp))
+        return
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dirfd)
     try:
         with os.fdopen(fd, "w") as fh:
@@ -154,8 +192,14 @@ def handover(root):
             return
     except OSError:
         return
+    cmd = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "setup.py"), "--auto"]
+    if WINDOWS:  # no exec on Windows: we are already the detached check process, so run it to the end here
+        if _timer:
+            _timer.cancel()
+        subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)
+        return
     signal.alarm(0)  # an alarm survives exec; setup.py sets its own
-    os.execv(sys.executable, [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "setup.py"), "--auto"])
+    os.execv(sys.executable, cmd)
 
 
 def announce_update(root):
@@ -204,9 +248,13 @@ def main():
     except Exception:
         pass  # a bad latest.json must not stop the update check below
     if not os.environ.get("GELATO_CONNECT_NO_UPDATE_CHECK") and due(root):
-        # through setup.sh: the hook's own python3 may be unable to verify HTTPS (python.org build on macOS)
-        subprocess.Popen(["bash", os.path.join(os.path.dirname(os.path.abspath(__file__)), "setup.sh"), "--check"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+        here = os.path.dirname(os.path.abspath(__file__))
+        quiet = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        if WINDOWS:  # this Python (py -3) verifies HTTPS; detached, no console window (DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW)
+            subprocess.Popen([sys.executable, "-I", os.path.join(here, "notice.py"), "--check"], creationflags=0x08000208, **quiet)
+        else:
+            # through setup.sh: the hook's own python3 may be unable to verify HTTPS (python.org build on macOS)
+            subprocess.Popen(["bash", os.path.join(here, "setup.sh"), "--check"], start_new_session=True, **quiet)
 
 
 if __name__ == "__main__":
