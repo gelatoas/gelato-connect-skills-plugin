@@ -69,7 +69,7 @@ class WinCase(unittest.TestCase):
         self.codex = os.path.join(self.home, '.codex')
         self.log = os.path.join(self.tmp, 'claude.log')
         if NT:  # a .cmd shim, like the one npm installs
-            stub, text = 'claude.cmd', '@echo off\r\necho %* >> "%s"\r\nexit /b 0\r\n' % self.log
+            stub, text = 'claude.cmd', '@echo off\r\necho %%* >> "%s"\r\nexit /b 0\r\n' % self.log
         else:
             stub, text = 'claude', '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % self.log
         with open(os.path.join(self.bin, stub), 'w') as f:
