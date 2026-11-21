@@ -94,7 +94,6 @@ class CallbackTests(EnvCase):
 class DestinationTests(EnvCase):
     def test_should_refuse_unexpected_hosts_before_any_sign_in(self):
         for bad in ('https://api.gelatoconnect.gelato.com:444', 'https://api.gelatoconnect.gelato.com@evil.example',
-                    'https://[removed]',
                     'http://localhost.evil.com', 'http://evil.example', 'https://localhost', 'ftp://localhost',
                     'http://localhost/mcp', 'http://localhost?x=1', 'http://localhost#f', 'http://u:p@localhost',
                     'http://localhost:99999x', 'http://api.gelatoconnect.gelato.com'):
@@ -119,7 +118,7 @@ class DestinationTests(EnvCase):
 
     def test_should_not_follow_a_redirect_with_the_token(self):
         other = fake_api()
-        api = fake_api(location=other.origin + '/account')
+        api = fake_api(location=other.origin + '/skills')
         self.addCleanup(api.close)
         self.addCleanup(other.close)
         with self.assertRaises(setup.SetupError):
@@ -134,42 +133,12 @@ class FetchTests(EnvCase):
         self.addCleanup(api.close)
         return api, lambda: setup.fetch_bundle(api.origin, TOKEN)
 
-    def test_should_fetch_the_bundle_of_the_accounts_print_house(self):
-        api, fetch = self.fetch()
-        self.assertEqual(fetch(), api.bundle)
-        self.assertEqual([r['path'] for r in api.requests], ['/skills', '/account', '/print-partners/ph-1/connect-skills/download'])
-
-    def test_should_accept_replies_wrapped_in_data(self):
-        api, fetch = self.fetch(wrap=True)
-        self.assertEqual(fetch(), api.bundle)
-
-    def test_should_retry_once_with_the_first_listed_print_house_on_404(self):
-        api, fetch = self.fetch(account_uid='admin-1', ok_uids=('ph-2',), listed=('ph-2', 'ph-3'), wrap=True)
-        self.assertEqual(fetch(), api.bundle)
-        self.assertEqual([r['path'] for r in api.requests], [
-            '/skills', '/account', '/print-partners/admin-1/connect-skills/download', '/print-partners',
-            '/print-partners/ph-2/connect-skills/download'])
-
-    def test_should_use_the_list_when_the_own_uid_is_a_placeholder(self):
-        # live, 13 Nov: a Gelato admin account's printHouseUid is one character that is no print house
-        api, fetch = self.fetch(account_uid='*', ok_uids=('ph-2',), listed=('ph-2',))
-        self.assertEqual(fetch(), api.bundle)
-        self.assertEqual([r['path'] for r in api.requests], [
-            '/skills', '/account', '/print-partners', '/print-partners/ph-2/connect-skills/download'])
-
-    def test_should_fail_cleanly_when_the_fallback_also_404s_or_is_empty(self):
-        for kw in ({'ok_uids': ()}, {'account_uid': 'admin-1', 'listed': ()}, {'account_uid': 'a b', 'listed': ('x/y',)}):
-            api, fetch = self.fetch(**kw)
-            with self.assertRaises(setup.SetupError, msg=kw):
-                fetch()
-        self.assertLessEqual(len(api.requests), 3)
-
-    def test_should_fail_cleanly_on_other_statuses_and_never_show_token_or_url(self):
-        for status in (401, 403, 500):
-            api, fetch = self.fetch(status=status)
+    def test_should_fail_cleanly_on_error_statuses_and_never_show_token_or_url(self):
+        for status in (401, 403, 404, 500):
+            api, fetch = self.fetch(skills_status=status)
             with self.assertRaises(setup.SetupError) as cm:
                 fetch()
-            self.assertEqual(len(api.requests), 3)  # /skills (404), /account, one download: no retry on a non-404
+            self.assertEqual([r['path'] for r in api.requests], ['/skills'])
             for secret in (TOKEN, api.origin, 'http'):
                 self.assertNotIn(secret, str(cm.exception))
 
@@ -180,13 +149,13 @@ class FetchTests(EnvCase):
         got = setup.unpack_bundle(fetch(), dest)
         self.assertEqual({(s['name'], s['version']) for s in got}, {(helpers.APIS, '1.2.0'), (helpers.KNOW, '3.4.5')})
         paths = [r['path'] for r in api.requests]
-        self.assertEqual((paths[0], len(paths)), ('/skills', 3))  # the older download is not asked
+        self.assertEqual((paths[0], len(paths)), ('/skills', 3))
         self.assertEqual(api.requests[0]['headers']['Authorization'], 'Bearer ' + TOKEN)
         for r in api.requests[1:]:
             self.assertTrue(r['path'].startswith('/skills/download/'))
             self.assertNotIn('Authorization', r['headers'])
 
-    def test_should_refuse_a_bad_public_listing_without_falling_back(self):
+    def test_should_refuse_a_bad_public_listing(self):
         good = helpers.make_skills()
         other = fake_api(skills=good)
         self.addCleanup(other.close)
@@ -199,21 +168,16 @@ class FetchTests(EnvCase):
         for label, skills in bad.items():
             api, fetch = self.fetch(skills=skills)
             if skills[0].get('url') == 'PATH':
-                skills[0]['url'] = api.origin + '/print-partners'
+                skills[0]['url'] = api.origin + '/other'
             with self.assertRaises(setup.SetupError, msg=label):
                 fetch()
-            for r in api.requests:  # never the older download, never a path outside /skills
+            for r in api.requests:  # never a path outside /skills
                 self.assertTrue(r['path'].startswith('/skills'), (label, r['path']))
         self.assertEqual(other.requests, [])
-        for status in (401, 403, 503):  # signed out, no print house, unavailable: an error, not the older download
-            api, fetch = self.fetch(skills=good, skills_status=status)
-            with self.assertRaises(setup.SetupError):
-                fetch()
-            self.assertEqual([r['path'] for r in api.requests], ['/skills'])
 
     def test_should_refuse_an_oversized_bundle(self):
         api, fetch = self.fetch()
-        with mock.patch.object(setup, 'MAX_BYTES', len(api.bundle) - 1), self.assertRaises(setup.SetupError):
+        with mock.patch.object(setup, 'MAX_BYTES', 1), self.assertRaises(setup.SetupError):
             fetch()
 
 

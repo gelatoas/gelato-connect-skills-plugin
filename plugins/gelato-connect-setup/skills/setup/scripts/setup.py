@@ -31,7 +31,6 @@ CLIENT_ID = 'gelato-connect-local-ai-assistant'
 BASE = 'https://auth.gelato.com/auth/realms/gelato-api/protocol/openid-connect'
 CALLBACK_PORTS = (39201, 39202, 39203, 39204, 39205)
 API_ORIGIN = 'https://api.gelatoconnect.gelato.com'  # public API: GET /skills, /skills/download/<token>, /skills/versions
-OLD_ORIGIN = 'https://[removed]'  # used only while the public routes answer 404; remove with _fetch_old
 MAX_BYTES = 50 * 1024 * 1024
 ENTRY = re.compile(r'(gelato-connect-apis|gelato-connect-product-knowledge)-([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})\.zip')
 # Sign-in scope. Add ' offline_access' once the Keycloak client allows it (today it refuses it and sign-in breaks):
@@ -264,7 +263,7 @@ def _http_why(e):
 
 
 def _get(origin, path, token, limit, opener):
-    """GET with the bearer token (none if `token` is None). Returns the body, or None on 404; any other failure (a redirect too) is an error."""
+    """GET with the bearer token (none if `token` is None). Returns the body; any failure (a redirect too) is an error."""
     headers = {'Accept': '*/*', 'User-Agent': USER_AGENT}
     if token is not None:
         headers['Authorization'] = 'Bearer ' + token
@@ -276,26 +275,19 @@ def _get(origin, path, token, limit, opener):
                 raise ValueError()
             return raw
     except urllib.error.HTTPError as e:
-        if e.code != 404:
-            _fail(_http_why(e))
+        _fail(_http_why(e))
     except ValueError:
         _fail('unexpected reply')
     except OSError as e:  # no answer at all: DNS, TLS, proxy, timeout
         _fail('network error: %s' % str(getattr(e, 'reason', e))[:200])
 
 
-def _data(raw):
-    value = json.loads(raw)
-    return value['data'] if isinstance(value.get('data'), dict) else value
+def fetch_bundle(origin, token, opener=None):
+    """The account's two skills packages as one ZIP of ZIPs (the shape unpack_bundle takes).
 
-
-def _fetch_public(origin, token, opener):
-    """Public API: GET /skills lists the two packages, each with a 5-minute link and the server's sha256.
-
-    Returns them as one bundle (the shape unpack_bundle takes), or None while the route is not there yet (404)."""
+    GET /skills lists them, each with a 5-minute link and the server's sha256."""
+    opener = opener or urllib.request.build_opener(NoRedirect())
     raw = _get(origin, '/skills', token, 1_000_000, opener)
-    if raw is None:
-        return None
     try:
         items = json.loads(raw)
         if not isinstance(items, list) or sorted(i['name'] for i in items) != sorted(NAMES):
@@ -308,36 +300,12 @@ def _fetch_public(origin, token, opener):
                         and i['url'].startswith(origin) and LINK.fullmatch(path)):  # links only to the host we asked
                     raise ValueError()
                 data = _get(origin, path, None, MAX_BYTES, opener)  # the link is the access: no token on it
-                if data is None or 'sha256:' + hashlib.sha256(data).hexdigest() != i['digest']:
+                if 'sha256:' + hashlib.sha256(data).hexdigest() != i['digest']:
                     raise ValueError()
                 z.writestr('%s-%s.zip' % (i['name'], i['version']), data)
         return buf.getvalue()
     except (ValueError, KeyError, TypeError):
         _fail()
-
-
-def fetch_bundle(origin, token, opener=None):
-    """The account's two skills packages as one ZIP of ZIPs: from the public API, else the older GNX download."""
-    opener = opener or urllib.request.build_opener(NoRedirect())
-    raw = _fetch_public(origin, token, opener)
-    return raw if raw is not None else _fetch_old(OLD_ORIGIN if origin == API_ORIGIN else origin, token, opener)
-
-
-def _fetch_old(origin, token, opener):
-    """The GNX bundle download. Remove (with OLD_ORIGIN) once the public routes are live."""
-
-    def download(uid):
-        if not isinstance(uid, str) or not re.fullmatch(r'[0-9A-Za-z_-]{1,100}', uid):
-            return None  # a Gelato admin account's own uid is a one-character placeholder (seen live, 13 Nov)
-        return _get(origin, '/print-partners/%s/connect-skills/download' % uid, token, MAX_BYTES, opener)
-
-    try:
-        raw = download(_data(_get(origin, '/account', token, 1_000_000, opener))['user']['printHouseUid'])
-        if raw is None:  # an admin account: its own uid is not a print house, so try the first listed one
-            raw = download(_data(_get(origin, '/print-partners', token, 1_000_000, opener))['printHouses'][0]['uid'])
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-        _fail()
-    return raw or _fail()
 
 
 def unpack_bundle(raw, dest):

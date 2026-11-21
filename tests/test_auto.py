@@ -96,7 +96,7 @@ class SetupStoresSession(EnvCase):
         self.assertTrue(os.path.exists(os.path.join(self.root, 'installed.json')))
 
     def test_should_remove_an_old_session_when_opted_out_even_if_the_install_fails(self):
-        api = fake_api(bundle=b'not a zip')
+        api = fake_api(skills_status=503)
         self.addCleanup(api.close)
         with open(self.session, 'w') as f:
             f.write('{"refresh_token": "old"}')
@@ -105,7 +105,7 @@ class SetupStoresSession(EnvCase):
         self.assertFalse(os.path.lexists(self.session))
 
     def test_should_keep_no_session_after_a_failed_install(self):
-        api = fake_api(bundle=b'not a zip')
+        api = fake_api(skills_status=503)
         self.addCleanup(api.close)
         self.assertEqual(self.run_setup(api)[0], 1)
         self.assertFalse(os.path.lexists(self.session))
@@ -182,7 +182,7 @@ class AutoTests(EnvCase):
 
     def test_should_record_nothing_when_the_install_fails(self):
         self.api.close()
-        self.api = fake_api(bundle=b'not a zip')
+        self.api = fake_api(skills_status=503)
         self.addCleanup(self.api.close)
         self.auto(self.good())
         self.assertEqual(self.read('installed.json'), {APIS: '1.0.0', KNOW: '1.0.0'})

@@ -37,8 +37,7 @@ class InstallTests(EnvCase):
         for name in (helpers.APIS, helpers.KNOW):
             self.assertTrue(os.path.isfile(os.path.join(self.root, 'marketplace', name, '.claude-plugin', 'plugin.json')))
             self.assertTrue(os.path.islink(os.path.join(self.home, '.codex', 'skills', name + '-skill')))
-        self.assertEqual([r['path'] for r in api.requests],
-                         ['/skills', '/account', '/print-partners/ph-1/connect-skills/download'])
+        self.assertEqual(len(api.requests), 3)
         r = api.requests[0]['headers']
         self.assertEqual((r['Authorization'], r['User-Agent']), ('Bearer ' + TOKEN, setup.USER_AGENT))
 
@@ -56,19 +55,18 @@ class InstallTests(EnvCase):
     def test_should_install_nothing_from_a_bad_bundle(self):
         good = helpers.make_zip(helpers.APIS, '1.2.0')
         know = helpers.make_zip(helpers.KNOW, '3.4.5')
-        for entries in ({helpers.APIS + '-1.2.0.zip': good, 'evil.zip': know},
-                        {helpers.APIS + '-1.2.0.zip': good},
-                        {helpers.APIS + '-1.2.0.zip': good, helpers.APIS + '-1.3.0.zip': good,
-                         helpers.KNOW + '-3.4.5.zip': know}):
-            api = fake_api(bundle=helpers.make_bundle(entries))
+        apis = {'name': helpers.APIS, 'version': '1.2.0', 'data': good}
+        for skills in ([apis, {'name': 'evil', 'version': '3.4.5', 'data': know}], [apis],
+                       [apis, dict(apis, version='1.3.0'), {'name': helpers.KNOW, 'version': '3.4.5', 'data': know}]):
+            api = fake_api(skills=skills)
             self.addCleanup(api.close)
             code, out, err = self.run_main(api)
-            self.assertEqual(code, 1, entries.keys())
+            self.assertEqual(code, 1, skills)
             self.assertIsNone(self.installed())
             self.assertFalse(os.path.exists(os.path.join(self.root, 'marketplace')))
         api = fake_api()
         self.addCleanup(api.close)
-        with mock.patch.object(setup, 'MAX_BYTES', len(api.bundle) - 1):  # oversized bundle
+        with mock.patch.object(setup, 'MAX_BYTES', 1):  # oversized bundle
             self.assertEqual(self.run_main(api)[0], 1)
         self.assertIsNone(self.installed())
 
@@ -87,7 +85,7 @@ class InstallTests(EnvCase):
             return setup.sign_in(browser_open=opener, fetch=fetch)
 
         for good in (False, True):  # failed run first: a good one would make the next 'up to date'
-            api = fake_api(bundle=None if good else b'not a zip')
+            api = fake_api(skills_status=200 if good else 503)
             self.addCleanup(api.close)
             urls = []
 

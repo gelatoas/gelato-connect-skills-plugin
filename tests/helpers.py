@@ -47,18 +47,14 @@ def make_bundle(entries=None):
 
 
 class FakeApi:
-    """Public API and GNX stand-in on a localhost port: GET /skills (only with `skills`), /skills/download/<token>,
-    /skills/versions, and the older /account, /print-partners, /print-partners/<uid>/connect-skills/download."""
+    """Public API stand-in on a localhost port: GET /skills, /skills/download/<token> and /skills/versions."""
 
-    def __init__(self, bundle=None, account_uid='ph-1', ok_uids=('ph-1',), listed=('ph-2',), status=200,
-                 location=None, wrap=False, versions=None, versions_status=200, hang=None, skills=None, skills_status=200):
-        self.bundle = make_bundle() if bundle is None else bundle
-        self.account_uid, self.ok_uids, self.listed, self.status = account_uid, set(ok_uids), listed, status
-        self.location, self.wrap, self.requests = location, wrap, []
+    def __init__(self, location=None, versions=None, versions_status=200, hang=None, skills=None, skills_status=200):
+        self.location, self.requests = location, []
         # GET /skills/versions: raw body, status, and an Event the handler waits on (to simulate a hang)
         self.versions, self.versions_status, self.hang = versions, versions_status, hang
-        # GET /skills: None = route absent (404). Else a list of dicts {name, version, data} plus optional url/digest overrides.
-        self.skills, self.skills_status = skills, skills_status
+        # GET /skills: a list of dicts {name, version, data} plus optional url/digest overrides; default is the two packages.
+        self.skills, self.skills_status = make_skills() if skills is None else skills, skills_status
         api = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -72,9 +68,6 @@ class FakeApi:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def json(self, value):
-                self.send(200, json.dumps({'data': value} if api.wrap else value).encode())
-
             def do_GET(self):
                 api.requests.append({'path': self.path, 'headers': dict(self.headers)})
                 if api.location:
@@ -87,7 +80,7 @@ class FakeApi:
                         api.hang.wait(30)
                     good = json.dumps({'versions': {APIS: '1.8.0', KNOW: '5.1.7'}}).encode()
                     self.send(api.versions_status, good if api.versions is None else api.versions)
-                elif self.path == '/skills' and api.skills is not None:
+                elif self.path == '/skills':
                     if api.skills_status != 200:
                         return self.send(api.skills_status)
                     self.send(200, json.dumps([{
@@ -95,19 +88,9 @@ class FakeApi:
                         'url': s.get('url', '%s/skills/download/%064x' % (api.origin, n)),
                         'digest': s.get('digest', 'sha256:' + hashlib.sha256(s['data']).hexdigest())}
                         for n, s in enumerate(api.skills)]).encode())
-                elif self.path.startswith('/skills/download/') and api.skills is not None:
+                elif self.path.startswith('/skills/download/'):
                     n = int(self.path.rsplit('/', 1)[1], 16)
                     self.send(200, api.skills[n]['data'], 'application/zip') if n < len(api.skills) else self.send(404)
-                elif self.path == '/account':
-                    self.json({'user': {'printHouseUid': api.account_uid, 'printHouseAccess': {}}})
-                elif self.path == '/print-partners':
-                    self.json({'printHouses': [{'uid': u} for u in api.listed]})
-                elif self.path.startswith('/print-partners/') and self.path.endswith('/connect-skills/download'):
-                    uid = self.path.split('/')[2]
-                    if api.status != 200 or uid not in api.ok_uids:
-                        self.send(api.status if api.status != 200 else 404)
-                    else:
-                        self.send(200, api.bundle, 'application/zip')
                 else:
                     self.send(404)
 
