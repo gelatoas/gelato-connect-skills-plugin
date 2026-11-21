@@ -36,7 +36,7 @@ Then ask your assistant: "Set up the Gelato Connect skills."
 ## What is public here
 
 - The OAuth client id and realm URL
-- The Gelato Connect API host (`api.gelatoconnect.gelato.com`) and, until its skills routes are live, the Gelato platform host (`[removed]`)
+- The Gelato Connect API host (`api.gelatoconnect.gelato.com`)
 - The installer
 - The two package names
 
@@ -45,9 +45,8 @@ Then ask your assistant: "Set up the Gelato Connect skills."
 After sign-in the setup asks the Gelato Connect API for the account's two skills
 packages (`GET /skills`), downloads each through its 5-minute link and checks it
 against the checksum the API returned, then installs them through a short-lived
-server on 127.0.0.1. While that route is not live yet (404) it uses the existing
-Connect skills download on the Gelato platform instead. The checksum comes from
-the same server, so it catches corruption, not a compromised server.
+server on 127.0.0.1. The checksum comes from the same server, so it catches
+corruption, not a compromised server.
 
 ## Update check
 
