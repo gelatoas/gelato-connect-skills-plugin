@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
@@ -330,6 +331,14 @@ def unpack_bundle(raw, dest):
 
 
 # --- installer --------------------------------------------------------------
+def _claude_dir_if_missing(env):
+    # The Claude desktop app has no claude on PATH but sets the path of its own binary; the installer calls a bare claude.
+    exe = env.get('CLAUDE_CODE_EXECPATH') or ''
+    if (not shutil.which('claude', path=env.get('PATH')) and os.path.basename(exe) in ('claude', 'claude.exe')
+            and os.path.isfile(exe) and os.access(exe, os.X_OK)):
+        return os.path.dirname(exe)
+
+
 def run_installer(skills, token, run=subprocess.run, targets=None):
     here = os.path.dirname(os.path.abspath(__file__))
     # Windows has no bash, curl or unzip: install_win.py is the same installer in Python (utf8: paths may hold any character).
@@ -340,6 +349,9 @@ def run_installer(skills, token, run=subprocess.run, targets=None):
         env = dict(os.environ, NO_PROXY='localhost,127.0.0.1', no_proxy='localhost,127.0.0.1')
         if targets:
             env['GELATO_CONNECT_TARGETS'] = targets
+        claude_dir = _claude_dir_if_missing(env)
+        if claude_dir:
+            env['PATH'] = os.pathsep.join(filter(None, (claude_dir, env.get('PATH'))))
         p = run(cmd, capture_output=True, text=True, timeout=1800, env=env, **({'encoding': 'utf-8', 'errors': 'replace'} if WINDOWS else {}))
     except (OSError, subprocess.TimeoutExpired):
         raise SetupError('error: the installer could not run to the end') from None
