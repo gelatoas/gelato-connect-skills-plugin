@@ -331,6 +331,44 @@ class PathGuardTests(EnvCase):
         self.assertIn('localhost', env['NO_PROXY'])
         self.assertIn('localhost', env['no_proxy'])
 
+    def _installer_path(self, execpath, with_claude=False):
+        bare = os.path.join(self.tmp, 'bare')
+        os.makedirs(bare, exist_ok=True)
+        path = (self.bin if with_claude else bare) + os.pathsep + bare
+        env = {'PATH': path, **({'CLAUDE_CODE_EXECPATH': execpath} if execpath else {})}
+        run = mock.Mock(return_value=mock.Mock(returncode=0, stdout='', stderr=''))
+        with mock.patch.dict(os.environ, env):  # EnvCase cleared the rest of the environment already
+            setup.run_installer([], 'tok', run)
+        return path, run.call_args.kwargs['env']['PATH']
+
+    def _fake_claude(self, name='claude'):
+        d = os.path.join(self.tmp, 'desktop')
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, name)
+        with open(p, 'w') as f:
+            f.write('#!/bin/sh\nexit 0\n')
+        os.chmod(p, 0o755)
+        return p
+
+    def test_should_put_the_desktop_app_claude_folder_first_on_path_when_claude_is_missing(self):
+        exe = self._fake_claude()
+        path, got = self._installer_path(exe)
+        self.assertEqual(got, os.path.dirname(exe) + os.pathsep + path)
+
+    def test_should_leave_path_alone_without_an_exec_path(self):
+        path, got = self._installer_path(None)
+        self.assertEqual(got, path)
+
+    def test_should_leave_path_alone_when_claude_is_already_on_it(self):
+        path, got = self._installer_path(self._fake_claude(), with_claude=True)
+        self.assertEqual(got, path)
+
+    def test_should_ignore_an_exec_path_that_is_missing_or_not_named_claude(self):
+        other = self._fake_claude('node')
+        for exe in (os.path.join(self.tmp, 'desktop', 'nope', 'claude'), other):
+            path, got = self._installer_path(exe)
+            self.assertEqual(got, path, exe)
+
     def test_should_never_touch_the_forbidden_folder(self):
         link = os.path.join(self.tmp, 'link')
         os.symlink(self.forbidden(), link)
